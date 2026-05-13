@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 /// Identifier for a replica in the distributed system.
-
 pub type ReplicaId = u64;
 
 /// A single event in a replica's history, identified by the replica
