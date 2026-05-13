@@ -32,14 +32,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A grow-only counter CRDT.
-///
-/// Internally stores a map from each replica's id to the number of
-/// increments that replica has observed locally. The visible counter
-/// value is the sum of all entries.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GCounter {
-    /// Per-replica increment counts. Only the owning replica ever writes
-    /// to its own slot; other replicas learn about the value via `merge`.
     counts: HashMap<ReplicaId, u64>,
 }
 
@@ -52,22 +46,16 @@ impl GCounter {
     }
 
     /// Increment this replica's local count by `n`.
-    ///
-    /// Each replica should only ever call `increment` with its own
-    /// `ReplicaId`. Calling with another replica's id is allowed by the
-    /// type system but breaks the convergence guarantees of the CRDT.
     pub fn increment(&mut self, replica: ReplicaId, n: u64) {
         *self.counts.entry(replica).or_insert(0) += n;
     }
 
     /// Return the current observed value of the counter, computed as the
-    /// sum of all per-replica counts.
     pub fn value(&self) -> u64 {
         self.counts.values().sum()
     }
 
     /// Number of replicas this counter has observed at least one
-    /// increment from. Useful for debugging and tests.
     pub fn replica_count(&self) -> usize {
         self.counts.len()
     }
@@ -76,10 +64,6 @@ impl GCounter {
 impl CvRDT for GCounter {
     /// Merge another G-Counter into this one by taking the element-wise
     /// maximum of each replica's count.
-    ///
-    /// This operation is commutative, associative, and idempotent, which
-    /// is what makes the G-Counter a CRDT: replicas can merge in any
-    /// order, any number of times, and still converge to the same state.
     fn merge(&mut self, other: &Self) {
         for (replica, count) in &other.counts {
             let entry = self.counts.entry(*replica).or_insert(0);
