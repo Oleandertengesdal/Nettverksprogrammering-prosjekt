@@ -40,10 +40,6 @@ impl TodoState {
         }
     }
 
-    pub fn peer_id(&self) -> &str {
-        &self.peer_id
-    }
-
     pub fn apply(&mut self, msg: &ClientMessage) {
         match msg {
             ClientMessage::Add { text } => self.add(text),
@@ -129,54 +125,49 @@ impl TodoState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::PeerSnapshot;
+
+    fn peers(state: &TodoState) -> Vec<PeerSnapshot> {
+        let ServerMessage::Snapshot { peers, .. } = state.snapshot();
+        peers
+    }
 
     #[test]
     fn add_creates_todo() {
         let mut s = TodoState::new("peer-1".into(), 1);
         s.add("Buy milk");
-        if let ServerMessage::Snapshot { peers, .. } = s.snapshot() {
-            assert_eq!(peers[0].todos.len(), 1);
-            assert_eq!(peers[0].todos[0].text, "Buy milk");
-            assert!(!peers[0].todos[0].completed);
-        }
+        let p = peers(&s);
+        assert_eq!(p[0].todos.len(), 1);
+        assert_eq!(p[0].todos[0].text, "Buy milk");
+        assert!(!p[0].todos[0].completed);
     }
 
     #[test]
     fn empty_add_is_ignored() {
         let mut s = TodoState::new("peer-1".into(), 1);
         s.add("   ");
-        if let ServerMessage::Snapshot { peers, .. } = s.snapshot() {
-            assert_eq!(peers[0].todos.len(), 0);
-        }
+        assert_eq!(peers(&s)[0].todos.len(), 0);
     }
 
     #[test]
     fn toggle_flips_completion() {
         let mut s = TodoState::new("peer-1".into(), 1);
         s.add("Walk dog");
-        let id = match s.snapshot() {
-            ServerMessage::Snapshot { peers, .. } => peers[0].todos[0].id.clone(),
-        };
+        let id = peers(&s)[0].todos[0].id.clone();
+
         s.toggle(&id);
-        if let ServerMessage::Snapshot { peers, .. } = s.snapshot() {
-            assert!(peers[0].todos[0].completed);
-        }
+        assert!(peers(&s)[0].todos[0].completed);
+
         s.toggle(&id);
-        if let ServerMessage::Snapshot { peers, .. } = s.snapshot() {
-            assert!(!peers[0].todos[0].completed);
-        }
+        assert!(!peers(&s)[0].todos[0].completed);
     }
 
     #[test]
     fn delete_removes_todo_from_snapshot() {
         let mut s = TodoState::new("peer-1".into(), 1);
         s.add("Temporary");
-        let id = match s.snapshot() {
-            ServerMessage::Snapshot { peers, .. } => peers[0].todos[0].id.clone(),
-        };
+        let id = peers(&s)[0].todos[0].id.clone();
         s.delete(&id);
-        if let ServerMessage::Snapshot { peers, .. } = s.snapshot() {
-            assert_eq!(peers[0].todos.len(), 0);
-        }
+        assert_eq!(peers(&s)[0].todos.len(), 0);
     }
 }
