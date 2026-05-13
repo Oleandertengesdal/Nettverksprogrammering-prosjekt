@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRDT Todos · Demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="page-header">
+      <div class="title-row">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="6" cy="6" r="2"/>
+            <circle cx="18" cy="6" r="2"/>
+            <circle cx="12" cy="18" r="2"/>
+            <line x1="6" y1="6" x2="18" y2="6"/>
+            <line x1="6" y1="6" x2="12" y2="18"/>
+            <line x1="18" y1="6" x2="12" y2="18"/>
+          </svg>
+        </div>
+        <h1>Shared Todos</h1>
+      </div>
+      <p class="subtitle">Real-time peer-to-peer todos powered by CRDT state sync.</p>
+      <p class="explainer">
+        This frontend is transport-driven: it renders peer state received from the backend
+        and sends local operations upstream. There is no local CRDT simulation in this page.
+      </p>
+    </header>
+
+    <section class="quick-guide" aria-label="How to present the system">
+      <h2>How to demo in 3 steps</h2>
+      <ol>
+        <li>Press <strong>Connect</strong> to attach this client to the sync layer.</li>
+        <li>Create and toggle todos from this client.</li>
+        <li>Observe peer cards update live when remote peers join, leave, and edit.</li>
+      </ol>
+    </section>
+
+    <section class="control-bar" aria-label="Demo controls">
+      <button id="connect-btn" class="btn btn-primary" type="button">Connect</button>
+      <button id="resync-btn" class="btn" type="button">Request resync</button>
+      <div class="spacer"></div>
+      <div class="sync-status" id="sync-status">
+        <span class="status-dot diverged"></span>
+        <span id="sync-status-text">Disconnected</span>
+      </div>
+    </section>
+
+    <section class="app-status" aria-live="polite">
+      <strong>Local peer:</strong> <span id="local-peer-id">not assigned</span>
+    </section>
+
+    <section class="replicas" id="replicas" aria-label="Replicas"></section>
+
+    <section class="log-section" aria-label="Activity log">
+      <div class="log-header">
+        <h2>Activity log</h2>
+        <button id="clear-log" class="link-btn" type="button">Clear</button>
+      </div>
+      <ol class="log-list" id="log-list"></ol>
+    </section>
+
+    <footer class="page-footer">
+      <p>
+        Built for IDATT2104 Nettverksprogrammering · CRDTs implemented from scratch in Rust ·
+        <a href="https://github.com/oleandertengesdal/Nettverksprogrammering-prosjekt" target="_blank" rel="noopener">source</a>
+      </p>
+    </footer>
+  </main>
+
+  <template id="replica-template">
+    <article class="replica">
+      <header class="replica-header">
+        <div class="replica-identity">
+          <span class="replica-avatar"></span>
+          <div>
+            <h3 class="replica-name"></h3>
+            <span class="replica-id"></span>
+          </div>
+        </div>
+        <span class="peer-state">offline</span>
+      </header>
+
+      <form class="add-form">
+        <input type="text" class="add-input" placeholder="What needs to be done?" autocomplete="off">
+      </form>
+
+      <ul class="todo-list"></ul>
+
+      <footer class="replica-footer">
+        <div class="clock-display" title="Vector clock">
+          <span class="clock-label">Clock</span>
+          <span class="clock-entries"></span>
+        </div>
+        <span class="pending-badge" hidden>● pending local ops</span>
+      </footer>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
