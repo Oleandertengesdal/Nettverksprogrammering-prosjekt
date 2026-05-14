@@ -4,25 +4,37 @@
 //! in `crdt-core`:
 //! - two [`GSet`]s for the "added" and "removed" id sets (2P-Set semantics),
 //! - a [`VectorClock`] for tracking causality across replicas,
-//! - plain `HashMap`s for the immutable text and the toggleable completed
-//!   flag (the latter will be upgraded to an `LwwRegister` once it lands
-//!   in `crdt-core`).
+//! - plain `HashMap`s for the immutable text and creator labels,
+//! - a `HashMap<id, bool>` for the toggleable completed flag, merged as
+//!   monotonic OR. (Known limitation: a completed item can't be un-completed
+//!   once another replica observes it as completed. Replacing this with an
+//!   `LwwRegister` is on the roadmap.)
+//!
+//! Because every field is itself either a CRDT or a monotonic structure,
+//! `TodoState` as a whole implements [`CvRDT`] and can be safely synced
+//! between replicas by `crdt-sync`.
 
-use crdt_core::{GSet, ReplicaId, VectorClock};
+use crdt_core::{CvRDT, GSet, ReplicaId, VectorClock};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::protocol::{ClientMessage, PeerSnapshot, ServerMessage, TodoItem};
 
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct TodoState {
+    #[serde(skip)]
     peer_id: String,
+    #[serde(skip)]
     replica_id: ReplicaId,
+    #[serde(skip)]
+    next_local_id: u64,
+
     added: GSet<String>,
     removed: GSet<String>,
     texts: HashMap<String, String>,
     completed: HashMap<String, bool>,
     creators: HashMap<String, String>,
     clock: VectorClock,
-    next_local_id: u64,
 }
 
 impl TodoState {
@@ -30,13 +42,13 @@ impl TodoState {
         Self {
             peer_id,
             replica_id,
+            next_local_id: 0,
             added: GSet::new(),
             removed: GSet::new(),
             texts: HashMap::new(),
             completed: HashMap::new(),
             creators: HashMap::new(),
             clock: VectorClock::new(),
-            next_local_id: 0,
         }
     }
 
@@ -122,6 +134,28 @@ impl TodoState {
     }
 }
 
+impl CvRDT for TodoState {
+    fn merge(&mut self, other: &Self) {
+        self.added.merge(&other.added);
+        self.removed.merge(&other.removed);
+
+        for (id, text) in &other.texts {
+            self.texts.entry(id.clone()).or_insert_with(|| text.clone());
+        }
+        for (id, creator) in &other.creators {
+            self.creators
+                .entry(id.clone())
+                .or_insert_with(|| creator.clone());
+        }
+        for (id, &remote_completed) in &other.completed {
+            let entry = self.completed.entry(id.clone()).or_insert(false);
+            *entry = *entry || remote_completed;
+        }
+
+        self.clock.merge(&other.clock);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +203,30 @@ mod tests {
         let id = peers(&s)[0].todos[0].id.clone();
         s.delete(&id);
         assert_eq!(peers(&s)[0].todos.len(), 0);
+    }
+
+    #[test]
+    fn merge_combines_additions_from_two_replicas() {
+        let mut a = TodoState::new("peer-a".into(), 1);
+        let mut b = TodoState::new("peer-b".into(), 2);
+        a.add("From A");
+        b.add("From B");
+        a.merge(&b);
+        b.merge(&a);
+        assert_eq!(peers(&a)[0].todos.len(), 2);
+        assert_eq!(peers(&b)[0].todos.len(), 2);
+    }
+
+    #[test]
+    fn merge_propagates_deletion() {
+        let mut a = TodoState::new("peer-a".into(), 1);
+        let mut b = TodoState::new("peer-b".into(), 2);
+        a.add("Doomed");
+        let id = peers(&a)[0].todos[0].id.clone();
+        b.merge(&a);
+        assert_eq!(peers(&b)[0].todos.len(), 1);
+        a.delete(&id);
+        b.merge(&a);
+        assert_eq!(peers(&b)[0].todos.len(), 0);
     }
 }

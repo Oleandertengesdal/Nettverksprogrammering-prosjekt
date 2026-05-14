@@ -1,8 +1,10 @@
 //! # HTTP/WebSocket server
 //!
 //! Builds the axum router, handles WebSocket upgrades, and bridges
-//! client messages into the local CRDT state. Every applied operation
-//! causes a fresh snapshot to be broadcast to all connected clients.
+//! client messages into the local CRDT state. Every applied operation:
+//! 1) mutates the shared `TodoState`,
+//! 2) wakes the sync layer so it can push the new state to peers,
+//! 3) broadcasts a fresh JSON snapshot to every connected browser.
 
 use axum::{
     extract::{
@@ -24,16 +26,24 @@ use crate::state::TodoState;
 #[derive(Clone)]
 pub struct AppState {
     pub inner: Arc<RwLock<TodoState>>,
-    pub tx: broadcast::Sender<String>,
+    pub ws_tx: broadcast::Sender<String>,
+    pub sync_notify: Option<broadcast::Sender<()>>,
 }
 
 impl AppState {
     pub fn new(state: TodoState) -> Self {
-        let (tx, _rx) = broadcast::channel::<String>(64);
+        let (ws_tx, _rx) = broadcast::channel::<String>(64);
         Self {
             inner: Arc::new(RwLock::new(state)),
-            tx,
+            ws_tx,
+            sync_notify: None,
         }
+    }
+
+    /// Attach a sync-layer notifier so local mutations propagate to peers.
+    pub fn with_sync_notifier(mut self, sender: broadcast::Sender<()>) -> Self {
+        self.sync_notify = Some(sender);
+        self
     }
 }
 
@@ -50,7 +60,7 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
-    let mut rx = state.tx.subscribe();
+    let mut rx = state.ws_tx.subscribe();
 
     if send_current_snapshot(&state, &mut sender).await.is_err() {
         return;
@@ -103,10 +113,13 @@ async fn apply_and_broadcast(state: &AppState, msg: ClientMessage) {
         let mut inner = state.inner.write().await;
         inner.apply(&msg);
     }
+    if let Some(notify) = &state.sync_notify {
+        let _ = notify.send(());
+    }
     broadcast_snapshot(state).await;
 }
 
-async fn broadcast_snapshot(state: &AppState) {
+pub async fn broadcast_snapshot(state: &AppState) {
     let snapshot = {
         let inner = state.inner.read().await;
         inner.snapshot()
@@ -114,7 +127,7 @@ async fn broadcast_snapshot(state: &AppState) {
 
     match serde_json::to_string(&snapshot) {
         Ok(json) => {
-            let _ = state.tx.send(json);
+            let _ = state.ws_tx.send(json);
         }
         Err(e) => tracing::error!("failed to serialize snapshot: {}", e),
     }

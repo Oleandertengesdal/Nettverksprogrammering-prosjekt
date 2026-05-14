@@ -7,14 +7,12 @@ authors.workspace = true
 
 [dependencies]
 serde = { workspace = true }
-serde_json = { workspace = true }
 bincode = { workspace = true }
+bytes = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
-uuid = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 crdt-core = { workspace = true }
