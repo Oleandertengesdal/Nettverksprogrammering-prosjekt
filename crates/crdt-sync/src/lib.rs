@@ -9,10 +9,11 @@
 //! [`SyncMessage`]s over length-prefixed frames.
 //!
 //! Two sync triggers:
-//! - **Push-on-change**: when the local state mutates, call
-//!   [`SyncNode::notify_change`] to broadcast immediately.
+//! - **Push-on-change**: when the local state mutates, fire the
+//!   sender returned by [`SyncNode::change_notifier`] to broadcast
+//!   the new state immediately.
 //! - **Anti-entropy**: every [`ANTI_ENTROPY_INTERVAL`] the outgoing
-//!   loop sends the latest state regardless of local changes, so
+//!   loop pushes the latest state regardless of local changes, so
 //!   replicas that missed a push will still converge.
 
 use bytes::Bytes;
@@ -52,7 +53,7 @@ impl<S> SyncNode<S>
 where
     S: CvRDT + Serialize + DeserializeOwned + Clone + Default + Send + Sync + 'static,
 {
-    /// Build a new sync node. Call [`run`](Self::run) to start the
+    /// Build a new sync node. Call [`SyncNode::run`] to start the
     /// listener and outgoing connectors.
     pub fn new(
         peer_id: String,
@@ -120,24 +121,26 @@ where
     S: CvRDT + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!(target: "crdt_sync", "sync listener bound to {}", addr);
+    tracing::info!("sync listener bound to {}", addr);
 
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, remote)) => {
-                    tracing::info!(target: "crdt_sync", "accepted sync connection from {}", remote);
+                    tracing::info!("accepted sync connection from {}", remote);
                     let peer_id = peer_id.clone();
                     let state = state.clone();
                     let on_remote_update = on_remote_update.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = serve_incoming::<S>(stream, peer_id, state, on_remote_update).await {
-                            tracing::warn!(target: "crdt_sync", "incoming connection ended: {}", e);
+                        let result =
+                            serve_incoming::<S>(stream, peer_id, state, on_remote_update).await;
+                        if let Err(e) = result {
+                            tracing::warn!("incoming connection ended: {}", e);
                         }
                     });
                 }
                 Err(e) => {
-                    tracing::error!(target: "crdt_sync", "accept error: {}", e);
+                    tracing::error!("accept error: {}", e);
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
             }
@@ -165,7 +168,7 @@ where
         let msg: SyncMessage<S> = bincode::deserialize(&bytes)?;
         match msg {
             SyncMessage::Hello { peer_id } => {
-                tracing::debug!(target: "crdt_sync", "hello from {}", peer_id);
+                tracing::debug!("hello from {}", peer_id);
             }
             SyncMessage::State(remote_state) => {
                 {
@@ -191,14 +194,16 @@ fn spawn_outgoing<S>(
         loop {
             match TcpStream::connect(addr).await {
                 Ok(stream) => {
-                    tracing::info!(target: "crdt_sync", "connected outgoing sync to {}", addr);
+                    tracing::info!("connected outgoing sync to {}", addr);
                     let mut change_rx = on_local_change.subscribe();
-                    if let Err(e) = drive_outgoing::<S>(stream, &peer_id, &state, &mut change_rx).await {
-                        tracing::warn!(target: "crdt_sync", "outgoing sync to {} ended: {}", addr, e);
+                    let result =
+                        drive_outgoing::<S>(stream, &peer_id, &state, &mut change_rx).await;
+                    if let Err(e) = result {
+                        tracing::warn!("outgoing sync to {} ended: {}", addr, e);
                     }
                 }
                 Err(e) => {
-                    tracing::debug!(target: "crdt_sync", "connect to {} failed: {}", addr, e);
+                    tracing::debug!("connect to {} failed: {}", addr, e);
                 }
             }
             tokio::time::sleep(RECONNECT_DELAY).await;
